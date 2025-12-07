@@ -9,21 +9,32 @@ This project aims to provide a full-stack solution (Frontend, Backend, and AI Wo
 The project follows a Microservices architecture to ensure the heavy AI processing doesn't block the web server.
 
 ```mermaid
-graph TD
-    User[User / Web Client] -->|Upload Zip/Image| API[Backend API]
-    API -->|Store File| Storage[(Local Storage)]
-    API -->|Push Job| Queue[Message Queue - Redis]
+graph LR
+    User[User<br/>Web Client]
+    API[Backend<br/>API]
+    Storage[(Storage)]
+    Queue[Message<br/>Queue]
 
-    subgraph "AI Worker (Python)"
-        Worker[Worker Service] -->|Pop Job| Queue
-        Worker -->|1. Detect| YOLO[YOLOv8 Detection]
-        Worker -->|2. Read| OCR[MangaOCR]
-        Worker -->|3. Translate| LLM[Qwen 2.5 - Local GPU]
-        Worker -->|4. Typeset| Inpaint[Inpainting & Text Wrapping]
+    User -->|Upload| API
+    API -->|Store| Storage
+    API -->|Queue Job| Queue
+
+    subgraph AIW["AI Worker - Python"]
+        Worker[Worker<br/>Service]
+        YOLO[YOLO<br/>Detection]
+        OCR[Manga<br/>OCR]
+        LLM[Qwen 2.5<br/>Translation]
+        Typeset[Typesetting<br/>Engine]
+
+        Worker -->|1. Detect| YOLO
+        YOLO -->|2. Read| OCR
+        OCR -->|3. Translate| LLM
+        LLM -->|4. Render| Typeset
     end
 
-    Worker -->|Save Result| Storage
-    User -->|Download| API
+    Queue -->|Pop Job| Worker
+    Typeset -->|Save| Storage
+    Storage -->|Download| User
 ```
 
 ## 🧩 Project Structure
