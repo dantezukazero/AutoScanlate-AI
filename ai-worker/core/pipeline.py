@@ -29,19 +29,26 @@ class MangaPipeline:
     def __init__(self):
         """Initialize the manga translation pipeline."""
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print(f"⚙️ Device: {self.device.upper()}")
+        print(f"Device: {self.device.upper()}")
 
         if not os.path.exists(YOLO_MODEL_NAME):
-            print(f"❌ Missing YOLO model: {YOLO_MODEL_NAME}")
+            print(f"Missing YOLO model: {YOLO_MODEL_NAME}")
             sys.exit(1)
 
         self.detector = YOLO(YOLO_MODEL_NAME)
         self.mocr = MangaOcr()
         self.translator = LocalTranslator(MODEL_PATH)
         self.typesetter = Typesetter(FONT_PATH)
-        print("✅ Pipeline Ready (V10 - Stable | Masked Inpainting).")
+        print("Pipeline Ready (V10 - Stable | Masked Inpainting).")
 
-    def process_image(self, image_path: str, output_path: Optional[str] = None) -> Optional[str]:
+    def process_image(
+        self,
+        image_path: str,
+        output_path: Optional[str] = None,
+        *,
+        source_language: str = "Japanese",
+        target_language: str = "English",
+    ) -> Optional[str]:
         """
         Process a single manga image.
 
@@ -57,7 +64,7 @@ class MangaPipeline:
                 img_src.load()
                 original_img = img_src.convert("RGB")
         except Exception as e:
-            print(f"⚠️ Skipped invalid image: {image_path} ({e})")
+            print(f"Skipped invalid image: {image_path} ({e})")
             return None
 
         print(f"   Processing: {os.path.basename(image_path)}")
@@ -86,7 +93,11 @@ class MangaPipeline:
                 if not jap_text.strip():
                     continue
 
-                fr_text = self.translator.translate(jap_text)
+                fr_text = self.translator.translate(
+                    jap_text,
+                    source_language=source_language,
+                    target_language=target_language,
+                )
                 self.typesetter.clean_box(original_img, box)
                 self.typesetter.draw_text(original_img, fr_text, box)
 
@@ -101,14 +112,14 @@ class MangaPipeline:
         original_img.save(save_path, "JPEG", quality=OUTPUT_QUALITY)
         return save_path
 
-    def process_zip(self, zip_path: str) -> None:
+    def process_zip(self, zip_path: str, *, source_language: str = "Japanese", target_language: str = "English") -> None:
         """
         Process a ZIP file containing manga images.
 
         Args:
             zip_path: Path to input ZIP file
         """
-        print(f"\n📦 ZIP Detected: {zip_path}")
+        print(f"\nZIP Detected: {zip_path}")
         temp_dir = TEMP_DIR
 
         if os.path.exists(temp_dir):
@@ -129,7 +140,11 @@ class MangaPipeline:
                 if file.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp')):
                     full_input_path = os.path.join(root, file)
                     new_jpg_path = self.process_image(
-                        full_input_path, output_path=full_input_path)
+                        full_input_path,
+                        output_path=full_input_path,
+                        source_language=source_language,
+                        target_language=target_language,
+                    )
 
                     if new_jpg_path and os.path.normpath(new_jpg_path) != os.path.normpath(full_input_path):
                         try:
@@ -149,9 +164,9 @@ class MangaPipeline:
         except Exception:
             pass
 
-        print(f"✅ Created: {output_zip}.zip")
+        print(f"Created: {output_zip}.zip")
 
-    def run(self, input_path: str) -> None:
+    def run(self, input_path: str, *, source_language: str = "Japanese", target_language: str = "English") -> None:
         """
         Run the pipeline on an input file (image or ZIP).
 
@@ -159,6 +174,6 @@ class MangaPipeline:
             input_path: Path to input file
         """
         if input_path.lower().endswith('.zip'):
-            self.process_zip(input_path)
+            self.process_zip(input_path, source_language=source_language, target_language=target_language)
         else:
-            self.process_image(input_path)
+            self.process_image(input_path, source_language=source_language, target_language=target_language)

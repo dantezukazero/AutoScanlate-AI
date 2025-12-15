@@ -1,62 +1,72 @@
-"""Text processing utilities"""
+"""Text processing utilities."""
+
+from __future__ import annotations
 
 import re
+from typing import Optional
 
 
 def sanitize_for_font(text: str) -> str:
     """
-    Clean forbidden characters to avoid squares or crashes in font rendering.
+    Sanitize text for Pillow font rendering.
 
-    Args:
-        text: The text to sanitize
-
-    Returns:
-        Sanitized text safe for font rendering
+    Keep European letters (incl. German umlauts) while removing characters that
+    tend to cause issues in common manga fonts (emoji, CJK leftovers, etc.).
     """
-    # 1. Smart replacements
     replacements = {
-        '…': '...', ''': "'", ''': "'", '"': '"', '"': '"',
-        '–': '-', '—': '-', 'œ': 'oe', 'Œ': 'OE'
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u201e": '"',
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2026": "...",
+        "\u00a0": " ",
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
 
-    # 2. Remove line breaks (CRITICAL for Pillow)
-    text = text.replace('\n', ' ').replace('\r', ' ')
+    text = text.replace("\n", " ").replace("\r", " ")
 
-    # 3. Whitelist (Letters, Numbers, Basic punctuation only)
-    # Remove everything that's not standard (emojis, remaining kanjis...)
-    allowed_chars_pattern = r"[^a-zA-Z0-9àâäéèêëîïôöùûüçÀÂÄÉÈÊËÎÏÔÖÙÛÜÇ.,?!:;'\-\"()\[\]\s]"
-    clean_text = re.sub(allowed_chars_pattern, '', text)
+    text = re.sub(r"[\U0001F300-\U0001FAFF]", "", text)  # emojis
+    text = re.sub(r"[\u200d\uFE0E\uFE0F]", "", text)  # ZWJ + variation selectors
+    text = re.sub(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]", "", text)  # JP/CN/KR scripts
 
-    # Reduce multiple spaces (e.g., "Hello   World" -> "Hello World")
-    clean_text = re.sub(r'\s+', ' ', clean_text)
-
-    return clean_text.strip()
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)  # control chars
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
-def clean_translation_output(raw: str) -> str:
+def clean_translation_output(raw: str, *, target_language: Optional[str] = None) -> str:
     """
-    Clean LLM translation output from thinking tags and prefixes.
-
-    Args:
-        raw: Raw LLM output
-
-    Returns:
-        Cleaned translation text
+    Clean LLM translation output from thinking tags and common prefixes.
     """
-    # 1. Clean <think> tags
-    clean = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL)
-    clean = clean.strip()
+    clean = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
 
-    # 2. Clean prefixes
-    prefixes = r'(?i)^(text|translation|english|en|output|response)\s*[:\-]?\s*'
-    clean = re.sub(prefixes, '', clean)
+    lang = (target_language or "").strip().lower()
+    lang_prefixes = [
+        "english", "en",
+        "german", "deutsch", "de",
+        "french", "fr",
+        "spanish", "es",
+        "italian", "it",
+        "portuguese", "pt",
+        "japanese", "ja",
+        "chinese", "zh",
+        "korean", "ko",
+        "russian", "ru",
+    ]
+    if lang and lang not in lang_prefixes:
+        lang_prefixes.append(lang)
 
-    # 3. Clean quotes
+    prefixes = (
+        r"(?i)^("
+        + "|".join(["text", "translation", "output", "response", "answer", "result", "final"] + lang_prefixes)
+        + r")\s*[:\-]?\s*"
+    )
+    clean = re.sub(prefixes, "", clean)
+
     clean = clean.strip().strip('"').strip("'")
+    return sanitize_for_font(clean)
 
-    # 4. Final sanitization (Font + Crash fix)
-    clean = sanitize_for_font(clean)
-
-    return clean

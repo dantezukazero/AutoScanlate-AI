@@ -15,14 +15,24 @@ def main():
         "input",
         help="Path to image or ZIP file to process"
     )
+    parser.add_argument(
+        "--source",
+        default="Japanese",
+        help="Source language (e.g. Japanese, auto). Default: Japanese",
+    )
+    parser.add_argument(
+        "--target",
+        default="English",
+        help="Target language (e.g. English, German). Default: English",
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
-        print("❌ File not found.")
+        print("File not found.")
         return
 
     pipeline = MangaPipeline()
-    pipeline.run(args.input)
+    pipeline.run(args.input, source_language=args.source, target_language=args.target)
 
 
 if __name__ == "__main__":

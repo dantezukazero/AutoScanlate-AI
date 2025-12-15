@@ -1,5 +1,6 @@
 __pycache__/
 venv/
+.venv/
 .env
 /models/*.gguf
 /models/*.pt
@@ -7,3 +8,6 @@ venv/
 /models/8b/*
 /models/14b/*
 /temp/*
+temp_process/
+temp_ui/
+translated_*.jpg
