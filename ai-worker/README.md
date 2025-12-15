@@ -294,6 +294,9 @@ Then open the URL shown in the terminal (usually `http://127.0.0.1:7860`).
 - UI: choose a translation model from the `Model (GGUF)` dropdown (or set a custom path).
 - CLI: `python main.py <input> --source auto --target German --model .\\models\\your_model.gguf`
 
+Note: If you use Ollama, many models are stored as a GGUF blob under `~/.ollama/models/blobs/sha256-*` (no extension).
+You can point the UI/CLI `--model` to that file as well, as long as it starts with the `GGUF` header.
+
 ### OCR for non-Japanese sources
 
 If your source is not Japanese (e.g. English/Korean/Chinese/German/etc.), install the optional OCR extras:

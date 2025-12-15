@@ -84,11 +84,31 @@ def _job_dir_for(
 
 
 def _discover_models() -> list[str]:
-    model_dir = Path(__file__).resolve().parent / "models"
-    if not model_dir.exists():
-        return []
-    models = sorted({str(p.resolve()) for p in model_dir.rglob("*.gguf")}, key=str.lower)
-    return models
+    base = Path(__file__).resolve().parent
+    models: set[str] = set()
+
+    model_dir = base / "models"
+    if model_dir.exists():
+        models |= {str(p.resolve()) for p in model_dir.rglob("*.gguf")}
+
+    # Also detect Ollama's internal GGUF blobs (if present). Many Ollama models are stored as a
+    # GGUF file under a sha256-* filename without an extension.
+    ollama_blobs = Path.home() / ".ollama" / "models" / "blobs"
+    if ollama_blobs.exists():
+        for blob in ollama_blobs.glob("sha256-*"):
+            try:
+                if not blob.is_file():
+                    continue
+                if blob.stat().st_size < 256 * 1024 * 1024:
+                    continue
+                with blob.open("rb") as f:
+                    if f.read(4) != b"GGUF":
+                        continue
+                models.add(str(blob.resolve()))
+            except Exception:
+                continue
+
+    return sorted(models, key=str.lower)
 
 
 def _resolve_model_path(model_choice: str, model_custom: str) -> str:
