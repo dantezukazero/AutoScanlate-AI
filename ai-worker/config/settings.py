@@ -9,6 +9,12 @@ CONTEXT_WINDOW = 4096
 YOLO_MODEL_NAME = "./models/manga-text-detector.pt"
 YOLO_CONFIDENCE_THRESHOLD = 0.20
 
+# OCR Configuration
+# Expand detected boxes a bit so characters aren't cut off (helps OCR a lot).
+OCR_CROP_PAD_PCT = 0.06  # 6% of box size on each side
+# Upscale OCR crops for better readability (2 = 2x). Keep small to avoid slowing down too much.
+OCR_UPSCALE_FACTOR = 2
+
 # Font Configuration
 FONT_PATH = "./fonts/animeace2_reg.ttf"
 FONT_SIZE_START = 20

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -16,6 +18,7 @@ from typing import Iterable, Optional
 import gradio as gr
 
 from core.pipeline import MangaPipeline
+from config.settings import MODEL_PATH
 
 
 SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
@@ -37,6 +40,97 @@ def _format_eta(seconds: float) -> str:
     return f"{hours}h {minutes:02d}m"
 
 
+def _safe_slug(value: str, *, max_len: int = 80) -> str:
+    value = value.strip()
+    value = re.sub(r"[^A-Za-z0-9._-]+", "_", value)
+    value = value.strip("._-")
+    if not value:
+        value = "job"
+    return value[:max_len]
+
+
+def _sha256_file(path: Path, *, progress=None) -> str:
+    h = hashlib.sha256()
+    size = path.stat().st_size
+    done = 0
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+            done += len(chunk)
+            if progress is not None and size > 0:
+                progress(min(0.05, 0.05 * (done / size)), desc="Hashing input…")
+    return h.hexdigest()
+
+
+def _job_dir_for(
+    input_path: Path,
+    *,
+    source_language: str,
+    target_language: str,
+    model_path: str,
+    progress=None,
+) -> Path:
+    base_dir = Path(__file__).resolve().parent / "temp_ui" / "jobs"
+    base_dir.mkdir(parents=True, exist_ok=True)
+    sha = _sha256_file(input_path, progress=progress)
+    slug = _safe_slug(input_path.stem)
+    src = _safe_slug(source_language, max_len=16)
+    tgt = _safe_slug(target_language, max_len=16)
+    model_slug = _safe_slug(Path(model_path).stem, max_len=24)
+    return base_dir / f"{slug}_{sha[:10]}_{src}_to_{tgt}_{model_slug}"
+
+
+def _discover_models() -> list[str]:
+    model_dir = Path(__file__).resolve().parent / "models"
+    if not model_dir.exists():
+        return []
+    models = sorted({str(p.resolve()) for p in model_dir.rglob("*.gguf")}, key=str.lower)
+    return models
+
+
+def _resolve_model_path(model_choice: str, model_custom: str) -> str:
+    base = Path(__file__).resolve().parent
+
+    def _resolve(value: str) -> Path:
+        p = Path(value).expanduser()
+        if p.is_absolute():
+            return p
+        return (base / p).resolve()
+
+    model_custom = (model_custom or "").strip()
+    if model_custom:
+        return str(_resolve(model_custom))
+    model_choice = (model_choice or "").strip()
+    if model_choice:
+        return str(_resolve(model_choice))
+    return str(_resolve(MODEL_PATH))
+
+
+def _load_checkpoint(job_dir: Path) -> dict:
+    path = job_dir / "checkpoint.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_checkpoint(job_dir: Path, data: dict) -> None:
+    job_dir.mkdir(parents=True, exist_ok=True)
+    path = job_dir / "checkpoint.json"
+    tmp = job_dir / "checkpoint.json.tmp"
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _expected_translated_path(translated_root: Path, rel_original: Path) -> Path:
+    return (translated_root / rel_original).with_suffix(".jpg")
+
+
 def _iter_images(root: Path) -> Iterable[Path]:
     for path in root.rglob("*"):
         if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_EXTS:
@@ -51,14 +145,16 @@ class SessionResult:
     translated_zip: Optional[Path] = None
 
 
-_PIPELINE: Optional[MangaPipeline] = None
+_PIPELINES: dict[str, MangaPipeline] = {}
 
 
-def _get_pipeline() -> MangaPipeline:
-    global _PIPELINE
-    if _PIPELINE is None:
-        _PIPELINE = MangaPipeline()
-    return _PIPELINE
+def _get_pipeline(model_path: str) -> MangaPipeline:
+    key = str(Path(model_path).resolve())
+    pipeline = _PIPELINES.get(key)
+    if pipeline is None:
+        pipeline = MangaPipeline(model_path=key)
+        _PIPELINES[key] = pipeline
+    return pipeline
 
 
 def _make_session_dir() -> Path:
@@ -115,15 +211,28 @@ def _translate_zip(
     *,
     source_language: str,
     target_language: str,
+    model_path: str,
     progress=None,
+    resume: bool = True,
 ) -> SessionResult:
     orig_dir = session_dir / "original"
     out_dir = session_dir / "translated"
     orig_dir.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    with zipfile.ZipFile(input_path, "r") as zip_ref:
-        zip_ref.extractall(orig_dir)
+    existing = list(_iter_images(orig_dir))
+    if not existing or not resume:
+        if not resume:
+            shutil.rmtree(orig_dir, ignore_errors=True)
+            shutil.rmtree(out_dir, ignore_errors=True)
+            try:
+                (session_dir / "checkpoint.json").unlink(missing_ok=True)
+            except Exception:
+                pass
+            orig_dir.mkdir(parents=True, exist_ok=True)
+            out_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(input_path, "r") as zip_ref:
+            zip_ref.extractall(orig_dir)
 
     original_paths = sorted(
         _iter_images(orig_dir),
@@ -132,9 +241,28 @@ def _translate_zip(
     if not original_paths:
         raise RuntimeError("No images found in the ZIP.")
 
+    checkpoint = _load_checkpoint(session_dir)
+    checkpoint.setdefault("input_name", input_path.name)
+    checkpoint.setdefault("source_language", source_language)
+    checkpoint.setdefault("target_language", target_language)
+    checkpoint.setdefault("model_path", str(Path(model_path).resolve()))
+    checkpoint["total_pages"] = len(original_paths)
+    checkpoint.setdefault("done", {})
+    _save_checkpoint(session_dir, checkpoint)
+
     total = len(original_paths)
+    already_done = 0
+    for page in original_paths:
+        rel = page.relative_to(orig_dir)
+        expected = _expected_translated_path(out_dir, rel)
+        if expected.exists():
+            already_done += 1
+            checkpoint["done"][rel.as_posix()] = expected.relative_to(out_dir).as_posix()
+    checkpoint["done_pages"] = already_done
+    _save_checkpoint(session_dir, checkpoint)
+
     if progress is not None:
-        progress(0, desc=f"Translating 0/{total}…")
+        progress(already_done / total, desc=f"Translating {already_done}/{total}…")
 
     translated_paths: list[Path] = []
     durations: list[float] = []
@@ -142,7 +270,12 @@ def _translate_zip(
         start_page = time.perf_counter()
 
         rel = page.relative_to(orig_dir)
-        out_hint = out_dir / rel
+        expected_out = _expected_translated_path(out_dir, rel)
+        if resume and expected_out.exists():
+            translated_paths.append(expected_out.resolve())
+            continue
+
+        out_hint = expected_out
         out_hint.parent.mkdir(parents=True, exist_ok=True)
         translated_path = pipeline.process_image(
             str(page),
@@ -152,19 +285,29 @@ def _translate_zip(
         )
         if translated_path:
             translated_paths.append(Path(translated_path).resolve())
+            checkpoint["done"][rel.as_posix()] = Path(translated_path).resolve().relative_to(out_dir).as_posix()
+            checkpoint["done_pages"] = len(checkpoint["done"])
+            _save_checkpoint(session_dir, checkpoint)
 
         dt = time.perf_counter() - start_page
         durations.append(dt)
         avg = sum(durations) / len(durations)
-        remaining = avg * max(0, total - idx)
+        done_now = len(checkpoint.get("done", {}))
+        remaining = avg * max(0, total - done_now)
         if progress is not None:
             progress(
-                min(1.0, idx / total),
-                desc=f"Translating {idx}/{total} • ETA {_format_eta(remaining)}",
+                min(1.0, done_now / total),
+                desc=f"Translating {done_now}/{total} • ETA {_format_eta(remaining)}",
             )
 
     if not translated_paths:
         raise RuntimeError("No pages were translated.")
+
+    translated_paths = [
+        _expected_translated_path(out_dir, page.relative_to(orig_dir)).resolve()
+        for page in original_paths
+        if _expected_translated_path(out_dir, page.relative_to(orig_dir)).exists()
+    ]
 
     zip_out = session_dir / f"{input_path.stem}_translated.zip"
     with zipfile.ZipFile(zip_out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -184,6 +327,9 @@ def translate(
     file_obj,
     source_language: str,
     target_language: str,
+    model_choice: str,
+    model_custom: str,
+    resume: bool,
     progress=gr.Progress(),
 ) -> tuple[SessionResult, gr.Slider, Optional[str], Optional[str], Optional[str], str]:
     if file_obj is None:
@@ -193,9 +339,33 @@ def translate(
     if not input_path.exists():
         raise gr.Error("Uploaded file path does not exist.")
 
-    pipeline = _get_pipeline()
-    session_dir = _make_session_dir()
-    logs: list[str] = [f"Session: {session_dir}", f"Languages: {source_language} -> {target_language}"]
+    model_path = _resolve_model_path(model_choice, model_custom)
+    if not Path(model_path).exists():
+        raise gr.Error(f"Model not found: {model_path}")
+
+    pipeline = _get_pipeline(model_path)
+    session_dir = _job_dir_for(
+        input_path,
+        source_language=source_language,
+        target_language=target_language,
+        model_path=model_path,
+        progress=progress,
+    )
+    logs: list[str] = [
+        f"Job: {session_dir}",
+        f"Languages: {source_language} -> {target_language}",
+        f"Model: {Path(model_path).name}",
+        f"Resume: {resume}",
+    ]
+
+    if resume:
+        checkpoint = _load_checkpoint(session_dir)
+        cp_model = str(checkpoint.get("model_path") or "").strip()
+        if cp_model and Path(cp_model).resolve() != Path(model_path).resolve():
+            raise gr.Error(
+                "This job was created with a different model. "
+                "Disable Resume or cleanup the job."
+            )
 
     try:
         if input_path.suffix.lower() == ".zip":
@@ -205,7 +375,9 @@ def translate(
                 session_dir,
                 source_language=source_language,
                 target_language=target_language,
+                model_path=model_path,
                 progress=progress,
+                resume=resume,
             )
             logs.append(f"Translated pages: {len(result.translated_paths)}")
         elif input_path.suffix.lower() in SUPPORTED_IMAGE_EXTS:
@@ -221,7 +393,6 @@ def translate(
         else:
             raise gr.Error("Unsupported file type. Use an image or a .zip.")
     except Exception as exc:
-        shutil.rmtree(session_dir, ignore_errors=True)
         raise gr.Error(str(exc)) from exc
 
     page_count = len(result.translated_paths)
@@ -282,7 +453,26 @@ def build_app() -> gr.Blocks:
         with gr.Row():
             upload = gr.File(label="Input (Image or ZIP)")
             translate_btn = gr.Button("Translate", variant="primary")
-            cleanup_btn = gr.Button("Cleanup Session")
+            pause_btn = gr.Button("Pause", variant="stop")
+            resume_toggle = gr.Checkbox(label="Resume (continue an existing job)", value=True)
+            cleanup_btn = gr.Button("Cleanup Job")
+
+        available_models = _discover_models()
+        default_model_path = _resolve_model_path("", "")
+        model_choices = available_models if available_models else [default_model_path]
+        default_choice = default_model_path if default_model_path in model_choices else model_choices[0]
+
+        with gr.Row():
+            model_choice = gr.Dropdown(
+                label="Model (GGUF)",
+                choices=model_choices,
+                value=default_choice,
+                interactive=True,
+            )
+            model_custom = gr.Textbox(
+                label="Custom model path (overrides dropdown)",
+                placeholder="Leave empty to use the dropdown model",
+            )
 
         with gr.Row():
             source_lang = gr.Dropdown(
@@ -305,11 +495,12 @@ def build_app() -> gr.Blocks:
         zip_out = gr.File(label="Translated ZIP (if input was ZIP)")
         logs = gr.Textbox(label="Logs", lines=6, interactive=False)
 
-        translate_btn.click(
+        translate_evt = translate_btn.click(
             fn=translate,
-            inputs=[upload, source_lang, target_lang],
+            inputs=[upload, source_lang, target_lang, model_choice, model_custom, resume_toggle],
             outputs=[state, page, orig_img, trans_img, zip_out, logs],
         )
+        pause_btn.click(fn=None, cancels=[translate_evt])
         page.change(fn=show_page, inputs=[state, page], outputs=[orig_img, trans_img, page])
         cleanup_btn.click(fn=cleanup, inputs=[state], outputs=[state, orig_img, trans_img, page, logs])
 

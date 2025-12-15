@@ -291,7 +291,8 @@ Then open the URL shown in the terminal (usually `http://127.0.0.1:7860`).
 ### Language
 
 - UI: choose `Source language` + `Target language` (e.g. `Japanese` -> `German`).
-- CLI: `python main.py <input> --source auto --target German`
+- UI: choose a translation model from the `Model (GGUF)` dropdown (or set a custom path).
+- CLI: `python main.py <input> --source auto --target German --model .\\models\\your_model.gguf`
 
 ### OCR for non-Japanese sources
 

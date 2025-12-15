@@ -25,13 +25,18 @@ def main():
         default="English",
         help="Target language (e.g. English, German). Default: English",
     )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Optional GGUF model path for translation (overrides config MODEL_PATH).",
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
         print("File not found.")
         return
 
-    pipeline = MangaPipeline()
+    pipeline = MangaPipeline(model_path=args.model)
     pipeline.run(args.input, source_language=args.source, target_language=args.target)
 
 

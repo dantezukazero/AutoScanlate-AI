@@ -15,7 +15,9 @@ from config.settings import (
     OUTPUT_QUALITY,
     TEMP_DIR,
     MODEL_PATH,
-    FONT_PATH
+    FONT_PATH,
+    OCR_CROP_PAD_PCT,
+    OCR_UPSCALE_FACTOR,
 )
 from services.ocr import OCRService
 from services.translation import LocalTranslator
@@ -26,7 +28,7 @@ from utils.box_processing import consolidate_boxes
 class MangaPipeline:
     """Main pipeline for processing manga images and ZIP files."""
 
-    def __init__(self):
+    def __init__(self, *, model_path: Optional[str] = None):
         """Initialize the manga translation pipeline."""
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"Device: {self.device.upper()}")
@@ -37,7 +39,7 @@ class MangaPipeline:
 
         self.detector = YOLO(YOLO_MODEL_NAME)
         self.ocr = OCRService()
-        self.translator = LocalTranslator(MODEL_PATH)
+        self.translator = LocalTranslator(model_path or MODEL_PATH)
         self.typesetter = Typesetter(FONT_PATH)
         print("Pipeline Ready (V10 - Stable | Masked Inpainting).")
 
@@ -69,27 +71,18 @@ class MangaPipeline:
 
         print(f"   Processing: {os.path.basename(image_path)}")
 
-        # Detect text boxes
-        results = self.detector(original_img, conf=YOLO_CONFIDENCE_THRESHOLD, verbose=False)
-        boxes = []
-        for r in results:
-            if r.boxes:
-                for box in r.boxes.xyxy.cpu().numpy():
-                    boxes.append(list(map(int, box)))
+        src_lang_key = (source_language or "Japanese").strip().lower()
+        boxes_text: list[tuple[list[int], str]] = []
+        if src_lang_key not in {"ja", "jp", "japanese"}:
+            try:
+                boxes_text = self.ocr.extract_boxes_and_text(original_img, source_language=source_language)
+            except Exception:
+                boxes_text = []
 
-        boxes = consolidate_boxes(boxes)
-
-        # Process each text box
-        if boxes:
-            for box in boxes:
-                x1, y1, x2, y2 = box
-                crop = original_img.crop((x1, y1, x2, y2))
-
-                src_text = self.ocr.extract_text(crop, source_language=source_language)
-
+        if boxes_text:
+            for box, src_text in boxes_text:
                 if not src_text.strip():
                     continue
-
                 fr_text = self.translator.translate(
                     src_text,
                     source_language=source_language,
@@ -97,6 +90,50 @@ class MangaPipeline:
                 )
                 self.typesetter.clean_box(original_img, box)
                 self.typesetter.draw_text(original_img, fr_text, box)
+        else:
+            # Detect text boxes (YOLO bubble detector)
+            results = self.detector(original_img, conf=YOLO_CONFIDENCE_THRESHOLD, verbose=False)
+            boxes = []
+            for r in results:
+                if r.boxes:
+                    for box in r.boxes.xyxy.cpu().numpy():
+                        boxes.append(list(map(int, box)))
+
+            boxes = consolidate_boxes(boxes)
+
+            # Process each text box
+            if boxes:
+                for box in boxes:
+                    x1, y1, x2, y2 = box
+                    w = max(1, x2 - x1)
+                    h = max(1, y2 - y1)
+                    pad_x = int(round(w * float(OCR_CROP_PAD_PCT)))
+                    pad_y = int(round(h * float(OCR_CROP_PAD_PCT)))
+
+                    x1p = max(0, x1 - pad_x)
+                    y1p = max(0, y1 - pad_y)
+                    x2p = min(original_img.width, x2 + pad_x)
+                    y2p = min(original_img.height, y2 + pad_y)
+
+                    crop = original_img.crop((x1p, y1p, x2p, y2p))
+                    if int(OCR_UPSCALE_FACTOR) > 1:
+                        crop = crop.resize(
+                            (crop.width * int(OCR_UPSCALE_FACTOR), crop.height * int(OCR_UPSCALE_FACTOR)),
+                            resample=Image.Resampling.LANCZOS,
+                        )
+
+                    src_text = self.ocr.extract_text(crop, source_language=source_language)
+
+                    if not src_text.strip():
+                        continue
+
+                    fr_text = self.translator.translate(
+                        src_text,
+                        source_language=source_language,
+                        target_language=target_language,
+                    )
+                    self.typesetter.clean_box(original_img, box)
+                    self.typesetter.draw_text(original_img, fr_text, box)
 
         # Save output
         if output_path:

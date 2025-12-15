@@ -73,6 +73,93 @@ class OCRService:
 
         return self._extract_easyocr(image, "en")
 
+    def extract_boxes_and_text(
+        self,
+        image: Image.Image,
+        *,
+        source_language: str,
+        min_confidence: float = 0.25,
+    ) -> list[tuple[list[int], str]]:
+        """
+        Return text boxes + text for page-level OCR (best for non-Japanese sources).
+
+        Output boxes are [x1, y1, x2, y2] in image coordinates.
+        """
+        lang = (source_language or "English").strip().lower()
+        if lang in {"ja", "jp", "japanese"}:
+            return []
+
+        if lang in {"zh", "chinese", "cn", "zh-cn", "zh-hans"}:
+            lang_code = "ch_sim"
+        elif lang in {"zh-hant", "zh-tw", "zh-hk", "traditional chinese"}:
+            lang_code = "ch_tra"
+        elif lang in {"ko", "korean"}:
+            lang_code = "ko"
+        elif lang in {"de", "german", "deutsch"}:
+            lang_code = "de"
+        elif lang in {"fr", "french"}:
+            lang_code = "fr"
+        elif lang in {"es", "spanish"}:
+            lang_code = "es"
+        elif lang in {"it", "italian"}:
+            lang_code = "it"
+        elif lang in {"pt", "portuguese"}:
+            lang_code = "pt"
+        elif lang in {"ru", "russian"}:
+            lang_code = "ru"
+        else:
+            lang_code = "en"
+
+        reader = self._easyocr_readers.get(lang_code)
+        if reader is None:
+            try:
+                import torch
+                import easyocr
+            except Exception as exc:
+                raise RuntimeError(
+                    "EasyOCR is required for this source language. "
+                    "Install it with: pip install -r requirements-ocr-extra.txt"
+                ) from exc
+
+            reader = easyocr.Reader([lang_code], gpu=torch.cuda.is_available())
+            self._easyocr_readers[lang_code] = reader
+
+        try:
+            import numpy as np
+
+            rgb = image.convert("RGB")
+            bgr = np.asarray(rgb)[:, :, ::-1]
+            results = reader.readtext(bgr, detail=1, paragraph=True)
+        except Exception:
+            return []
+
+        out: list[tuple[list[int], str]] = []
+        for item in results or []:
+            try:
+                bbox, text, conf = item
+            except Exception:
+                continue
+            if not text or not str(text).strip():
+                continue
+            try:
+                conf_f = float(conf)
+            except Exception:
+                conf_f = 0.0
+            if conf_f < float(min_confidence):
+                continue
+            try:
+                xs = [int(round(float(p[0]))) for p in bbox]
+                ys = [int(round(float(p[1]))) for p in bbox]
+                x1, x2 = max(0, min(xs)), max(0, max(xs))
+                y1, y2 = max(0, min(ys)), max(0, max(ys))
+                if x2 <= x1 or y2 <= y1:
+                    continue
+            except Exception:
+                continue
+            out.append(([x1, y1, x2, y2], str(text).strip()))
+
+        return out
+
     def _extract_manga_ocr(self, image: Image.Image) -> str:
         if self._manga_ocr is None:
             from manga_ocr import MangaOcr

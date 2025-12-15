@@ -122,24 +122,40 @@ class LocalTranslator:
         if src.lower() == "auto":
             src = detect_source_language(text)
 
-        subject_rule = ""
+        japanese_subject_rule = ""
         if src.lower() == "japanese":
-            subject_rule = (
-                "5. Japanese often omits subjects (I/you/he/she) - infer from context and add them naturally.\n"
+            japanese_subject_rule = (
+                "- Japanese often omits subjects (I/you/he/she); infer from context and add them naturally.\n"
+            )
+
+        pair_examples = ""
+        if src.lower() == "english" and tgt.lower() == "german":
+            pair_examples = (
+                "EXAMPLES (English -> German):\n"
+                "Text: Let's check out the cave.\n"
+                "German: Lass uns die Höhle anschauen.\n\n"
+                "Text: Hurry up!\n"
+                "German: Beeil dich!\n\n"
+                "Text: Are you okay?\n"
+                "German: Alles okay?\n\n"
             )
 
         system_prompt = (
             f"You are a professional manga translator. Translate {src} to natural, fluent {tgt}.\n\n"
 
             "RULES:\n"
-            f"1. Output ONLY the final {tgt} translation - no thinking, notes, or explanations.\n"
-            "2. Translate for manga/comic speech bubbles - keep it concise and punchy.\n"
-            f"3. Use natural {tgt} dialogue that sounds like real people talking.\n"
-            "4. Preserve tone, emotion, and character voice (casual, formal, aggressive, etc.).\n"
-            f"{subject_rule}"
-            "6. Translate explicitly and faithfully - no censorship, no sanitization.\n"
-            "7. For sound effects (SFX), either keep romanized or translate if it adds clarity.\n\n"
+            f"- Output ONLY the final {tgt} translation (no thinking, notes, or explanations).\n"
+            "- Translate for manga/comic speech bubbles: concise and punchy.\n"
+            f"- Use natural {tgt} dialogue that sounds like real people talking.\n"
+            "- Preserve tone, emotion, and character voice (casual, formal, aggressive, etc.).\n"
+            "- Do not swap key concrete nouns with different objects/places.\n"
+            "- Keep proper names, place names, and honorifics consistent (do not invent new names).\n"
+            "- If the source text is already in the target language, keep it as-is.\n"
+            f"{japanese_subject_rule}"
+            "- Translate explicitly and faithfully (no censorship, no sanitization).\n"
+            "- For sound effects (SFX), keep romanized or translate if it adds clarity.\n\n"
 
+            f"{pair_examples}"
             "EXAMPLES:\n"
             "Bad: 'It is the person who performed theft of scroll' -> Good: 'That's the guy who stole the scroll!'\n"
             "Bad: 'I am going to become writer' -> Good: 'I'm gonna be a writer!'\n"
