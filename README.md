@@ -1,4 +1,21 @@
 (Simple UI FORK + Experimental Multilanguage)
+
+#  ----------------------------------------  #
+#   Manga AI Translator SIMPLE UI FEATURES 
+#  ----------------------------------------  #
+
+Run 
+python ui.py
+
+In Browser
+http://127.0.0.1:7860/
+
+Drag and Drop 
+Language Selection
+Pause and Resume
+LLM Selection
+
+---------------------
 # 🏯 Manga AI Translator 
 
 An automated, privacy-focused, GPU-accelerated pipeline to translate manga and comics locally.
@@ -118,6 +135,8 @@ See inner README for detailed llama-cpp-python compilation instructions.
 ```bash
 python main.py ../my_manga_chapter.zip
 ```
+
+
 
 ## 🗺️ Roadmap
 
