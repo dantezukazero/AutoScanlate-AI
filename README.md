@@ -1,4 +1,5 @@
-# 🏯 Manga AI Translator (Simple UI FORK)
+(Simple UI FORK + Experimental Multilanguage)
+# 🏯 Manga AI Translator 
 
 An automated, privacy-focused, GPU-accelerated pipeline to translate manga and comics locally.
 
