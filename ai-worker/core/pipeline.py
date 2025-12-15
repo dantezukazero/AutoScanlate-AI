@@ -92,6 +92,7 @@ class MangaPipeline:
             except Exception:
                 boxes_text = []
 
+        processed_boxes: list[list[int]] = []
         if boxes_text:
             for box, src_text in boxes_text:
                 if not src_text.strip():
@@ -103,50 +104,67 @@ class MangaPipeline:
                 )
                 self.typesetter.clean_box(original_img, box)
                 self.typesetter.draw_text(original_img, fr_text, box)
-        else:
-            # Detect text boxes (YOLO bubble detector)
-            results = self.detector(original_img, conf=YOLO_CONFIDENCE_THRESHOLD, verbose=False)
-            boxes = []
-            for r in results:
-                if r.boxes:
-                    for box in r.boxes.xyxy.cpu().numpy():
-                        boxes.append(list(map(int, box)))
+                processed_boxes.append(box)
 
-            boxes = consolidate_boxes(boxes)
+        def _iou(a: list[int], b: list[int]) -> float:
+            ax1, ay1, ax2, ay2 = a
+            bx1, by1, bx2, by2 = b
+            ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+            ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+            iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+            inter = iw * ih
+            if inter <= 0:
+                return 0.0
+            a_area = max(1, (ax2 - ax1) * (ay2 - ay1))
+            b_area = max(1, (bx2 - bx1) * (by2 - by1))
+            return float(inter) / float(a_area + b_area - inter)
 
-            # Process each text box
-            if boxes:
-                for box in boxes:
-                    x1, y1, x2, y2 = box
-                    w = max(1, x2 - x1)
-                    h = max(1, y2 - y1)
-                    pad_x = int(round(w * float(OCR_CROP_PAD_PCT)))
-                    pad_y = int(round(h * float(OCR_CROP_PAD_PCT)))
+        # Detect text boxes (YOLO bubble detector) and process anything not already covered by EasyOCR.
+        results = self.detector(original_img, conf=YOLO_CONFIDENCE_THRESHOLD, verbose=False)
+        boxes = []
+        for r in results:
+            if r.boxes:
+                for box in r.boxes.xyxy.cpu().numpy():
+                    boxes.append(list(map(int, box)))
 
-                    x1p = max(0, x1 - pad_x)
-                    y1p = max(0, y1 - pad_y)
-                    x2p = min(original_img.width, x2 + pad_x)
-                    y2p = min(original_img.height, y2 + pad_y)
+        boxes = consolidate_boxes(boxes)
 
-                    crop = original_img.crop((x1p, y1p, x2p, y2p))
-                    if int(OCR_UPSCALE_FACTOR) > 1:
-                        crop = crop.resize(
-                            (crop.width * int(OCR_UPSCALE_FACTOR), crop.height * int(OCR_UPSCALE_FACTOR)),
-                            resample=Image.Resampling.LANCZOS,
-                        )
+        # Process each text box
+        if boxes:
+            for box in boxes:
+                if processed_boxes and max((_iou(box, pb) for pb in processed_boxes), default=0.0) >= 0.3:
+                    continue
 
-                    src_text = self.ocr.extract_text(crop, source_language=source_language)
+                x1, y1, x2, y2 = box
+                w = max(1, x2 - x1)
+                h = max(1, y2 - y1)
+                pad_x = int(round(w * float(OCR_CROP_PAD_PCT)))
+                pad_y = int(round(h * float(OCR_CROP_PAD_PCT)))
 
-                    if not src_text.strip():
-                        continue
+                x1p = max(0, x1 - pad_x)
+                y1p = max(0, y1 - pad_y)
+                x2p = min(original_img.width, x2 + pad_x)
+                y2p = min(original_img.height, y2 + pad_y)
 
-                    fr_text = self.translator.translate(
-                        src_text,
-                        source_language=source_language,
-                        target_language=target_language,
+                crop = original_img.crop((x1p, y1p, x2p, y2p))
+                if int(OCR_UPSCALE_FACTOR) > 1:
+                    crop = crop.resize(
+                        (crop.width * int(OCR_UPSCALE_FACTOR), crop.height * int(OCR_UPSCALE_FACTOR)),
+                        resample=Image.Resampling.LANCZOS,
                     )
-                    self.typesetter.clean_box(original_img, box)
-                    self.typesetter.draw_text(original_img, fr_text, box)
+
+                src_text = self.ocr.extract_text(crop, source_language=source_language)
+
+                if not src_text.strip():
+                    continue
+
+                fr_text = self.translator.translate(
+                    src_text,
+                    source_language=source_language,
+                    target_language=target_language,
+                )
+                self.typesetter.clean_box(original_img, box)
+                self.typesetter.draw_text(original_img, fr_text, box)
 
         # Save output
         if output_path:

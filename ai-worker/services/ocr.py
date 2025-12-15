@@ -78,7 +78,7 @@ class OCRService:
         image: Image.Image,
         *,
         source_language: str,
-        min_confidence: float = 0.25,
+        min_confidence: float = 0.10,
     ) -> list[tuple[list[int], str]]:
         """
         Return text boxes + text for page-level OCR (best for non-Japanese sources).
@@ -129,11 +129,53 @@ class OCRService:
 
             rgb = image.convert("RGB")
             bgr = np.asarray(rgb)[:, :, ::-1]
-            results = reader.readtext(bgr, detail=1, paragraph=True)
+            primary = dict(
+                detail=1,
+                paragraph=True,
+                canvas_size=4096,
+                mag_ratio=1.5,
+                text_threshold=0.6,
+                low_text=0.3,
+                link_threshold=0.4,
+                add_margin=0.1,
+                contrast_ths=0.1,
+                adjust_contrast=0.5,
+            )
+            fallback = dict(
+                detail=1,
+                paragraph=True,
+                canvas_size=5120,
+                mag_ratio=2.0,
+                text_threshold=0.5,
+                low_text=0.2,
+                link_threshold=0.4,
+                add_margin=0.15,
+                contrast_ths=0.05,
+                adjust_contrast=0.7,
+            )
+
+            results = list(reader.readtext(bgr, **primary) or [])
+            if not results:
+                results = list(reader.readtext(bgr, **fallback) or [])
+            else:
+                results.extend(list(reader.readtext(bgr, **fallback) or []))
         except Exception:
             return []
 
-        out: list[tuple[list[int], str]] = []
+        def _iou(a: list[int], b: list[int]) -> float:
+            ax1, ay1, ax2, ay2 = a
+            bx1, by1, bx2, by2 = b
+            ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+            ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+            iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+            inter = iw * ih
+            if inter <= 0:
+                return 0.0
+            a_area = max(1, (ax2 - ax1) * (ay2 - ay1))
+            b_area = max(1, (bx2 - bx1) * (by2 - by1))
+            return float(inter) / float(a_area + b_area - inter)
+
+        out: list[tuple[list[int], str, float]] = []
         for item in results or []:
             try:
                 bbox, text, conf = item
@@ -156,9 +198,20 @@ class OCRService:
                     continue
             except Exception:
                 continue
-            out.append(([x1, y1, x2, y2], str(text).strip()))
+            box = [x1, y1, x2, y2]
+            text_s = str(text).strip()
 
-        return out
+            replaced = False
+            for i, (prev_box, prev_text, prev_conf) in enumerate(out):
+                if _iou(prev_box, box) >= 0.7:
+                    if conf_f > prev_conf and len(text_s) >= len(prev_text):
+                        out[i] = (box, text_s, conf_f)
+                    replaced = True
+                    break
+            if not replaced:
+                out.append((box, text_s, conf_f))
+
+        return [(b, t) for (b, t, _) in out]
 
     def _extract_manga_ocr(self, image: Image.Image) -> str:
         if self._manga_ocr is None:
