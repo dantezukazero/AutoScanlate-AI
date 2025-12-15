@@ -18,9 +18,10 @@ from config.settings import (
     FONT_PATH,
     OCR_CROP_PAD_PCT,
     OCR_UPSCALE_FACTOR,
+    OLLAMA_HOST,
 )
 from services.ocr import OCRService
-from services.translation import LocalTranslator
+from services.translation import create_translator
 from services.typesetting import Typesetter
 from utils.box_processing import consolidate_boxes
 
@@ -28,7 +29,14 @@ from utils.box_processing import consolidate_boxes
 class MangaPipeline:
     """Main pipeline for processing manga images and ZIP files."""
 
-    def __init__(self, *, model_path: Optional[str] = None):
+    def __init__(
+        self,
+        *,
+        model_path: Optional[str] = None,
+        translation_backend: str = "llama_cpp",
+        ollama_host: str = OLLAMA_HOST,
+        ollama_model: Optional[str] = None,
+    ):
         """Initialize the manga translation pipeline."""
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"Device: {self.device.upper()}")
@@ -39,7 +47,12 @@ class MangaPipeline:
 
         self.detector = YOLO(YOLO_MODEL_NAME)
         self.ocr = OCRService()
-        self.translator = LocalTranslator(model_path or MODEL_PATH)
+        self.translator = create_translator(
+            model_path=model_path or MODEL_PATH,
+            backend=translation_backend,
+            ollama_host=(ollama_host or OLLAMA_HOST),
+            ollama_model=ollama_model,
+        )
         self.typesetter = Typesetter(FONT_PATH)
         print("Pipeline Ready (V10 - Stable | Masked Inpainting).")
 

@@ -18,7 +18,7 @@ from typing import Iterable, Optional
 import gradio as gr
 
 from core.pipeline import MangaPipeline
-from config.settings import MODEL_PATH
+from config.settings import MODEL_PATH, OLLAMA_HOST
 
 
 SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
@@ -168,11 +168,22 @@ class SessionResult:
 _PIPELINES: dict[str, MangaPipeline] = {}
 
 
-def _get_pipeline(model_path: str) -> MangaPipeline:
-    key = str(Path(model_path).resolve())
+def _get_pipeline(
+    *,
+    backend: str,
+    model_path: str,
+    ollama_host: str,
+    ollama_model: str,
+) -> MangaPipeline:
+    key = f"{backend}|{Path(model_path).resolve()}|{ollama_host}|{ollama_model}"
     pipeline = _PIPELINES.get(key)
     if pipeline is None:
-        pipeline = MangaPipeline(model_path=key)
+        pipeline = MangaPipeline(
+            model_path=model_path,
+            translation_backend=backend,
+            ollama_host=ollama_host,
+            ollama_model=ollama_model or None,
+        )
         _PIPELINES[key] = pipeline
     return pipeline
 
@@ -347,8 +358,11 @@ def translate(
     file_obj,
     source_language: str,
     target_language: str,
+    backend: str,
     model_choice: str,
     model_custom: str,
+    ollama_host: str,
+    ollama_model: str,
     resume: bool,
     progress=gr.Progress(),
 ) -> tuple[SessionResult, gr.Slider, Optional[str], Optional[str], Optional[str], str]:
@@ -359,11 +373,26 @@ def translate(
     if not input_path.exists():
         raise gr.Error("Uploaded file path does not exist.")
 
-    model_path = _resolve_model_path(model_choice, model_custom)
-    if not Path(model_path).exists():
-        raise gr.Error(f"Model not found: {model_path}")
+    backend_key = (backend or "").strip().lower()
+    if backend_key == "ollama":
+        model_path = "ollama"
+        ollama_host = (ollama_host or OLLAMA_HOST).strip()
+        ollama_model = (ollama_model or "").strip()
+        if not ollama_model:
+            raise gr.Error("Please set an Ollama model name (e.g. qwen2.5:14b-instruct).")
+    else:
+        model_path = _resolve_model_path(model_choice, model_custom)
+        if not Path(model_path).exists():
+            raise gr.Error(f"Model not found: {model_path}")
+        ollama_host = ""
+        ollama_model = ""
 
-    pipeline = _get_pipeline(model_path)
+    pipeline = _get_pipeline(
+        backend=backend_key or "llama_cpp",
+        model_path=model_path,
+        ollama_host=ollama_host,
+        ollama_model=ollama_model,
+    )
     session_dir = _job_dir_for(
         input_path,
         source_language=source_language,
@@ -374,7 +403,8 @@ def translate(
     logs: list[str] = [
         f"Job: {session_dir}",
         f"Languages: {source_language} -> {target_language}",
-        f"Model: {Path(model_path).name}",
+        f"Backend: {backend_key or 'llama_cpp'}",
+        f"Model: {ollama_model if backend_key == 'ollama' else Path(model_path).name}",
         f"Resume: {resume}",
     ]
 
@@ -483,6 +513,12 @@ def build_app() -> gr.Blocks:
         default_choice = default_model_path if default_model_path in model_choices else model_choices[0]
 
         with gr.Row():
+            backend = gr.Dropdown(
+                label="Translation backend",
+                choices=["llama_cpp", "ollama"],
+                value="llama_cpp",
+                interactive=True,
+            )
             model_choice = gr.Dropdown(
                 label="Model (GGUF)",
                 choices=model_choices,
@@ -493,6 +529,10 @@ def build_app() -> gr.Blocks:
                 label="Custom model path (overrides dropdown)",
                 placeholder="Leave empty to use the dropdown model",
             )
+
+        with gr.Row():
+            ollama_host = gr.Textbox(label="Ollama host", value=OLLAMA_HOST)
+            ollama_model = gr.Textbox(label="Ollama model", placeholder="e.g. qwen2.5:14b-instruct")
 
         with gr.Row():
             source_lang = gr.Dropdown(
@@ -517,7 +557,7 @@ def build_app() -> gr.Blocks:
 
         translate_evt = translate_btn.click(
             fn=translate,
-            inputs=[upload, source_lang, target_lang, model_choice, model_custom, resume_toggle],
+            inputs=[upload, source_lang, target_lang, backend, model_choice, model_custom, ollama_host, ollama_model, resume_toggle],
             outputs=[state, page, orig_img, trans_img, zip_out, logs],
         )
         pause_btn.click(fn=None, cancels=[translate_evt])

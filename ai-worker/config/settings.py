@@ -24,6 +24,9 @@ FONT_SIZE_MIN = 2
 TRANSLATION_TEMPERATURE = 0.1
 TRANSLATION_MAX_TOKENS = 200
 
+# Optional Ollama HTTP backend (instead of GGUF/llama.cpp)
+OLLAMA_HOST = "http://127.0.0.1:11434"
+
 # Typesetting Configuration
 BOX_PADDING = 6
 BOX_BORDER_RADIUS = 65
