@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import time
 import zipfile
@@ -109,6 +110,30 @@ def _discover_models() -> list[str]:
                 continue
 
     return sorted(models, key=str.lower)
+
+
+def _discover_ollama_models() -> list[str]:
+    try:
+        proc = subprocess.run(
+            ["ollama", "list"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        return []
+
+    models: list[str] = []
+    for line in (proc.stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.lower().startswith("name "):
+            continue
+        name = line.split()[0].strip()
+        if name:
+            models.append(name)
+    return models
 
 
 def _resolve_model_path(model_choice: str, model_custom: str) -> str:
@@ -372,7 +397,6 @@ def translate(
     model_choice: str,
     model_custom: str,
     ollama_host: str,
-    ollama_model: str,
     resume: bool,
     progress=gr.Progress(),
 ) -> tuple[SessionResult, gr.Slider, Optional[str], Optional[str], Optional[str], str]:
@@ -386,7 +410,7 @@ def translate(
     backend_key = (backend or "").strip().lower()
     if backend_key == "ollama":
         ollama_host = (ollama_host or OLLAMA_HOST).strip()
-        ollama_model = (ollama_model or "").strip()
+        ollama_model = (model_choice or "").strip()
         if not ollama_model:
             raise gr.Error("Please set an Ollama model name (e.g. qwen2.5:14b-instruct).")
         model_path = ""
@@ -532,6 +556,7 @@ def build_app() -> gr.Blocks:
             cleanup_btn = gr.Button("Cleanup Job")
 
         available_models = _discover_models()
+        available_ollama = _discover_ollama_models()
         default_model_path = _resolve_model_path("", "")
         model_choices = available_models if available_models else [default_model_path]
         default_choice = default_model_path if default_model_path in model_choices else model_choices[0]
@@ -544,10 +569,11 @@ def build_app() -> gr.Blocks:
                 interactive=True,
             )
             model_choice = gr.Dropdown(
-                label="Model (GGUF)",
+                label="Model",
                 choices=model_choices,
                 value=default_choice,
                 interactive=True,
+                allow_custom_value=True,
             )
             model_custom = gr.Textbox(
                 label="Custom model path (overrides dropdown)",
@@ -556,7 +582,33 @@ def build_app() -> gr.Blocks:
 
         with gr.Row():
             ollama_host = gr.Textbox(label="Ollama host", value=OLLAMA_HOST)
-            ollama_model = gr.Textbox(label="Ollama model", placeholder="e.g. qwen2.5:14b-instruct")
+
+        def _on_backend_change(selected: str):
+            key = (selected or "").strip().lower()
+            if key == "ollama":
+                models = _discover_ollama_models()
+                value = models[0] if models else ""
+                return (
+                    gr.update(label="Model (Ollama)", choices=models, value=value),
+                    gr.update(visible=False),
+                    gr.update(visible=True),
+                )
+
+            models = _discover_models()
+            default_path = _resolve_model_path("", "")
+            choices = models if models else [default_path]
+            value = default_path if default_path in choices else choices[0]
+            return (
+                gr.update(label="Model (GGUF)", choices=choices, value=value),
+                gr.update(visible=True),
+                gr.update(visible=False),
+            )
+
+        backend.change(
+            fn=_on_backend_change,
+            inputs=[backend],
+            outputs=[model_choice, model_custom, ollama_host],
+        )
 
         with gr.Row():
             source_lang = gr.Dropdown(
@@ -581,7 +633,7 @@ def build_app() -> gr.Blocks:
 
         translate_evt = translate_btn.click(
             fn=translate,
-            inputs=[upload, source_lang, target_lang, backend, model_choice, model_custom, ollama_host, ollama_model, resume_toggle],
+            inputs=[upload, source_lang, target_lang, backend, model_choice, model_custom, ollama_host, resume_toggle],
             outputs=[state, page, orig_img, trans_img, zip_out, logs],
         )
         pause_btn.click(fn=None, cancels=[translate_evt])
