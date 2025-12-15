@@ -1,7 +1,7 @@
 (Simple UI FORK + Experimental Multilanguage)
 
 #  ----------------------------------------  #
-#   Manga AI Translator SIMPLE UI FEATURES 
+#   Manga AI Translator SIMPLE UI FEATURES   #
 #  ----------------------------------------  #
 
 Run 
@@ -10,10 +10,10 @@ python ui.py
 In Browser
 http://127.0.0.1:7860/
 
-Drag and Drop 
-Language Selection
-Pause and Resume
-LLM Selection
+- Drag and Drop 
+- Language Selection
+- Pause and Resume
+- -LLM Selection
 
 ---------------------
 # 🏯 Manga AI Translator 
