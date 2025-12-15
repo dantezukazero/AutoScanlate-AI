@@ -9,7 +9,7 @@ from core.pipeline import MangaPipeline
 def main():
     """Main entry point for the manga translator."""
     parser = argparse.ArgumentParser(
-        description="Translate manga images from Japanese to English"
+        description="Translate manga images (image or ZIP) between languages"
     )
     parser.add_argument(
         "input",
@@ -18,7 +18,7 @@ def main():
     parser.add_argument(
         "--source",
         default="Japanese",
-        help="Source language (e.g. Japanese, auto). Default: Japanese",
+        help="Source language (e.g. Japanese, English, Korean, Chinese, auto). Default: Japanese",
     )
     parser.add_argument(
         "--target",

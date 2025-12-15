@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,18 @@ SUPPORTED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
 def _natural_key(path: str) -> list[object]:
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", path)]
+
+
+def _format_eta(seconds: float) -> str:
+    seconds = max(0.0, float(seconds))
+    total = int(round(seconds))
+    if total < 60:
+        return f"{total}s"
+    minutes, sec = divmod(total, 60)
+    if minutes < 60:
+        return f"{minutes}m {sec:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m"
 
 
 def _iter_images(root: Path) -> Iterable[Path]:
@@ -61,6 +74,7 @@ def _translate_single_image(
     *,
     source_language: str,
     target_language: str,
+    progress=None,
 ) -> SessionResult:
     orig_dir = session_dir / "original"
     out_dir = session_dir / "translated"
@@ -69,6 +83,9 @@ def _translate_single_image(
 
     copied_input = orig_dir / input_path.name
     shutil.copy2(input_path, copied_input)
+
+    if progress is not None:
+        progress(0, desc="Processing image…")
 
     save_basename = copied_input.stem
     save_path_hint = out_dir / f"{save_basename}.jpg"
@@ -80,6 +97,9 @@ def _translate_single_image(
     )
     if not translated_path:
         raise RuntimeError("Image processing failed.")
+
+    if progress is not None:
+        progress(1, desc="Done")
 
     return SessionResult(
         session_dir=session_dir,
@@ -95,6 +115,7 @@ def _translate_zip(
     *,
     source_language: str,
     target_language: str,
+    progress=None,
 ) -> SessionResult:
     orig_dir = session_dir / "original"
     out_dir = session_dir / "translated"
@@ -111,8 +132,15 @@ def _translate_zip(
     if not original_paths:
         raise RuntimeError("No images found in the ZIP.")
 
+    total = len(original_paths)
+    if progress is not None:
+        progress(0, desc=f"Translating 0/{total}…")
+
     translated_paths: list[Path] = []
-    for page in original_paths:
+    durations: list[float] = []
+    for idx, page in enumerate(original_paths, start=1):
+        start_page = time.perf_counter()
+
         rel = page.relative_to(orig_dir)
         out_hint = out_dir / rel
         out_hint.parent.mkdir(parents=True, exist_ok=True)
@@ -124,6 +152,16 @@ def _translate_zip(
         )
         if translated_path:
             translated_paths.append(Path(translated_path).resolve())
+
+        dt = time.perf_counter() - start_page
+        durations.append(dt)
+        avg = sum(durations) / len(durations)
+        remaining = avg * max(0, total - idx)
+        if progress is not None:
+            progress(
+                min(1.0, idx / total),
+                desc=f"Translating {idx}/{total} • ETA {_format_eta(remaining)}",
+            )
 
     if not translated_paths:
         raise RuntimeError("No pages were translated.")
@@ -146,6 +184,7 @@ def translate(
     file_obj,
     source_language: str,
     target_language: str,
+    progress=gr.Progress(),
 ) -> tuple[SessionResult, gr.Slider, Optional[str], Optional[str], Optional[str], str]:
     if file_obj is None:
         raise gr.Error("Please drop an image or a ZIP file.")
@@ -166,6 +205,7 @@ def translate(
                 session_dir,
                 source_language=source_language,
                 target_language=target_language,
+                progress=progress,
             )
             logs.append(f"Translated pages: {len(result.translated_paths)}")
         elif input_path.suffix.lower() in SUPPORTED_IMAGE_EXTS:
@@ -175,6 +215,7 @@ def translate(
                 session_dir,
                 source_language=source_language,
                 target_language=target_language,
+                progress=progress,
             )
             logs.append("Translated: 1 image")
         else:
@@ -230,6 +271,11 @@ def build_app() -> gr.Blocks:
         gr.Markdown("# AutoScanlate AI - Local UI")
         gr.Markdown(f"UI file: `{Path(__file__).resolve()}`")
         gr.Markdown("Drop an image or a ZIP. Left = original, right = translated.")
+        gr.Markdown("Translation shows a progress bar with ETA.")
+        gr.Markdown(
+            "For non-Japanese source OCR (EN/DE/FR/ES/IT/PT/RU/KO/ZH), install: "
+            "`pip install -r requirements-ocr-extra.txt`"
+        )
 
         state = gr.State(None)
 

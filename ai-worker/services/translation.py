@@ -68,7 +68,9 @@ def detect_source_language(text: str) -> str:
         return "Russian"
     if re.search(r"[\u4e00-\u9fff]", text):  # CJK ideographs (no kana)
         return "Chinese"
-    return "auto"
+    if re.search(r"[A-Za-z]", text):
+        return "English"
+    return "English"
 
 
 class LocalTranslator:
@@ -143,7 +145,7 @@ class LocalTranslator:
             "Bad: 'I am going to become writer' -> Good: 'I'm gonna be a writer!'\n"
             "Bad: 'This is delicious' -> Good: 'This is so good!'\n\n"
 
-            "Now translate the following Japanese text:"
+            f"Now translate the following {src} text:"
         )
 
         messages = [

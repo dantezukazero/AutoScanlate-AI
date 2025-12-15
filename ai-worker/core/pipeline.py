@@ -7,7 +7,6 @@ import zipfile
 import torch
 from typing import Optional
 from PIL import Image
-from manga_ocr import MangaOcr
 from ultralytics import YOLO
 
 from config.settings import (
@@ -18,6 +17,7 @@ from config.settings import (
     MODEL_PATH,
     FONT_PATH
 )
+from services.ocr import OCRService
 from services.translation import LocalTranslator
 from services.typesetting import Typesetter
 from utils.box_processing import consolidate_boxes
@@ -36,7 +36,7 @@ class MangaPipeline:
             sys.exit(1)
 
         self.detector = YOLO(YOLO_MODEL_NAME)
-        self.mocr = MangaOcr()
+        self.ocr = OCRService()
         self.translator = LocalTranslator(MODEL_PATH)
         self.typesetter = Typesetter(FONT_PATH)
         print("Pipeline Ready (V10 - Stable | Masked Inpainting).")
@@ -85,16 +85,13 @@ class MangaPipeline:
                 x1, y1, x2, y2 = box
                 crop = original_img.crop((x1, y1, x2, y2))
 
-                try:
-                    jap_text = self.mocr(crop)
-                except Exception:
-                    continue
+                src_text = self.ocr.extract_text(crop, source_language=source_language)
 
-                if not jap_text.strip():
+                if not src_text.strip():
                     continue
 
                 fr_text = self.translator.translate(
-                    jap_text,
+                    src_text,
                     source_language=source_language,
                     target_language=target_language,
                 )

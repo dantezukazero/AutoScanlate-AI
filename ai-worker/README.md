@@ -16,6 +16,7 @@ This project uses a combination of state-of-the-art AI models to **Detect**, **R
 - **👁️ Smart Detection**: Uses YOLOv8 (fine-tuned on Manga109) to detect speech bubbles.
   - Smart Box Merging algorithm to consolidate fragmented vertical text bubbles into single coherent blocks.
 - **📖 Robust OCR**: Utilizes MangaOCR to accurately read vertical and handwritten Japanese text.
+  - Optional: EasyOCR fallback for non-Japanese sources (EN/DE/FR/ES/IT/PT/RU/KO/ZH) via `requirements-ocr-extra.txt`.
 - **🧠 Uncensored Translation**: Integrated with Qwen 2.5 7B (Abliterated) for high-quality, unfiltered translations (supports NSFW, slang, and honorifics).
   - Custom "Anti-Thinking" prompt engineering to prevent LLM hallucinations or internal monologues appearing in the final text.
 - **🎨 Advanced Typesetting**:
@@ -291,3 +292,11 @@ Then open the URL shown in the terminal (usually `http://127.0.0.1:7860`).
 
 - UI: choose `Source language` + `Target language` (e.g. `Japanese` -> `German`).
 - CLI: `python main.py <input> --source auto --target German`
+
+### OCR for non-Japanese sources
+
+If your source is not Japanese (e.g. English/Korean/Chinese/German/etc.), install the optional OCR extras:
+
+```bash
+pip install -r requirements-ocr-extra.txt
+```
