@@ -70,7 +70,7 @@ def _job_dir_for(
     *,
     source_language: str,
     target_language: str,
-    model_path: str,
+    translator_id: str,
     progress=None,
 ) -> Path:
     base_dir = Path(__file__).resolve().parent / "temp_ui" / "jobs"
@@ -79,8 +79,8 @@ def _job_dir_for(
     slug = _safe_slug(input_path.stem)
     src = _safe_slug(source_language, max_len=16)
     tgt = _safe_slug(target_language, max_len=16)
-    model_slug = _safe_slug(Path(model_path).stem, max_len=24)
-    return base_dir / f"{slug}_{sha[:10]}_{src}_to_{tgt}_{model_slug}"
+    translator_slug = _safe_slug(translator_id, max_len=32)
+    return base_dir / f"{slug}_{sha[:10]}_{src}_to_{tgt}_{translator_slug}"
 
 
 def _discover_models() -> list[str]:
@@ -175,7 +175,11 @@ def _get_pipeline(
     ollama_host: str,
     ollama_model: str,
 ) -> MangaPipeline:
-    key = f"{backend}|{Path(model_path).resolve()}|{ollama_host}|{ollama_model}"
+    try:
+        resolved_model = str(Path(model_path).resolve()) if Path(model_path).exists() else model_path
+    except Exception:
+        resolved_model = model_path
+    key = f"{backend}|{resolved_model}|{ollama_host}|{ollama_model}"
     pipeline = _PIPELINES.get(key)
     if pipeline is None:
         pipeline = MangaPipeline(
@@ -242,7 +246,7 @@ def _translate_zip(
     *,
     source_language: str,
     target_language: str,
-    model_path: str,
+    translator: dict,
     progress=None,
     resume: bool = True,
 ) -> SessionResult:
@@ -276,7 +280,13 @@ def _translate_zip(
     checkpoint.setdefault("input_name", input_path.name)
     checkpoint.setdefault("source_language", source_language)
     checkpoint.setdefault("target_language", target_language)
-    checkpoint.setdefault("model_path", str(Path(model_path).resolve()))
+    if isinstance(translator, dict):
+        checkpoint["translator"] = {
+            "backend": str(translator.get("backend") or "").strip(),
+            "model_path": str(translator.get("model_path") or "").strip(),
+            "ollama_host": str(translator.get("ollama_host") or "").strip(),
+            "ollama_model": str(translator.get("ollama_model") or "").strip(),
+        }
     checkpoint["total_pages"] = len(original_paths)
     checkpoint.setdefault("done", {})
     _save_checkpoint(session_dir, checkpoint)
@@ -375,21 +385,23 @@ def translate(
 
     backend_key = (backend or "").strip().lower()
     if backend_key == "ollama":
-        model_path = "ollama"
         ollama_host = (ollama_host or OLLAMA_HOST).strip()
         ollama_model = (ollama_model or "").strip()
         if not ollama_model:
             raise gr.Error("Please set an Ollama model name (e.g. qwen2.5:14b-instruct).")
+        model_path = ""
+        translator_id = f"ollama_{ollama_model}"
     else:
         model_path = _resolve_model_path(model_choice, model_custom)
         if not Path(model_path).exists():
             raise gr.Error(f"Model not found: {model_path}")
         ollama_host = ""
         ollama_model = ""
+        translator_id = Path(model_path).name
 
     pipeline = _get_pipeline(
         backend=backend_key or "llama_cpp",
-        model_path=model_path,
+        model_path=model_path or MODEL_PATH,
         ollama_host=ollama_host,
         ollama_model=ollama_model,
     )
@@ -397,7 +409,7 @@ def translate(
         input_path,
         source_language=source_language,
         target_language=target_language,
-        model_path=model_path,
+        translator_id=translator_id,
         progress=progress,
     )
     logs: list[str] = [
@@ -410,12 +422,19 @@ def translate(
 
     if resume:
         checkpoint = _load_checkpoint(session_dir)
-        cp_model = str(checkpoint.get("model_path") or "").strip()
-        if cp_model and Path(cp_model).resolve() != Path(model_path).resolve():
-            raise gr.Error(
-                "This job was created with a different model. "
-                "Disable Resume or cleanup the job."
+        cp = checkpoint.get("translator")
+        if isinstance(cp, dict):
+            cp_backend = str(cp.get("backend") or "").strip().lower()
+            cp_model_path = str(cp.get("model_path") or "").strip()
+            cp_ollama_host = str(cp.get("ollama_host") or "").strip()
+            cp_ollama_model = str(cp.get("ollama_model") or "").strip()
+            mismatch = (
+                cp_backend != (backend_key or "llama_cpp")
+                or (backend_key == "ollama" and (cp_ollama_host != ollama_host or cp_ollama_model != ollama_model))
+                or (backend_key != "ollama" and cp_model_path and Path(cp_model_path).resolve() != Path(model_path).resolve())
             )
+            if mismatch:
+                raise gr.Error("This job was created with a different translation backend/model. Disable Resume or cleanup the job.")
 
     try:
         if input_path.suffix.lower() == ".zip":
@@ -425,7 +444,12 @@ def translate(
                 session_dir,
                 source_language=source_language,
                 target_language=target_language,
-                model_path=model_path,
+                translator={
+                    "backend": backend_key or "llama_cpp",
+                    "model_path": model_path,
+                    "ollama_host": ollama_host,
+                    "ollama_model": ollama_model,
+                },
                 progress=progress,
                 resume=resume,
             )
