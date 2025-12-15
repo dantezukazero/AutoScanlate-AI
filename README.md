@@ -1,7 +1,7 @@
 (Simple UI FORK + Experimental Multilanguage)
 
 #  ----------------------------------------  #
-#   Manga AI Translator SIMPLE UI FEATURES   #
+#        Manga AI Translator SIMPLE UI       #
 #  ----------------------------------------  #
 
 Run 
@@ -13,7 +13,7 @@ http://127.0.0.1:7860/
 - Drag and Drop 
 - Language Selection
 - Pause and Resume
-- -LLM Selection
+- LLM Selection
 
 ---------------------
 # 🏯 Manga AI Translator 
